@@ -5,7 +5,7 @@ from time import sleep, localtime, strftime
 import os
 from btree import Btree
 import shutil
-from misc import split_condition
+from misc import split_condition, split_condition_bin
 
 class Database:
     '''
@@ -87,6 +87,7 @@ class Database:
         self._update_meta_length()
         self._update_meta_locks()
         self._update_meta_insert_stack()
+
 
 
     def create_table(self, name=None, column_names=None, column_types=None, primary_key=None, load=None):
@@ -243,6 +244,48 @@ class Database:
             self.save()
 
 
+    def insert_to_buffer(self, table_name, row, lock_load_save=True):
+        insert_table = table_name + "_insert_queue"
+        if insert_table in self.tables:
+            column = self.tables[insert_table].columns[self.tables[insert_table].column_names.index('counter')]
+            if column[-1] == None:
+                column[-1] = 0
+            counter_num = column[-1] + 1
+            column2 = self.tables[insert_table].columns[0]
+            if counter_num >= 3:
+                self.empty_stack(insert_table, table_name)
+                counter_num = 1
+                row.append(counter_num)
+                self.insert(insert_table, row)
+            else:
+                row.append(counter_num)
+                self.insert(insert_table, row)
+        else:
+            col_names = [i for i in self.tables[table_name].column_names]
+            col_names.append('counter')
+            col_types = [i for i in self.tables[table_name].column_types]
+            col_types.append(int)
+
+            self.create_table(insert_table,col_names,col_types)
+            counter_num = 1
+            row.append(counter_num)
+            self.insert(insert_table, row)
+
+
+    def empty_stack(self, insert_table, table_name ):
+        len_col = len(self.tables[insert_table].columns)
+        len_row = len(self.tables[insert_table].columns[1])
+        new_row = []
+        for i in range(len_row) :
+            for j in range(len_col - 1) :
+                    new_row.append(self.tables[insert_table].columns[j][i])
+            if new_row[0] != None:
+                self.insert(table_name, new_row)
+            new_row = []
+        condition = 'counter>=1'
+        self.delete(insert_table,condition)
+
+
     def update(self, table_name, set_value, set_column, condition):
         '''
         Update the value of a column where condition is met.
@@ -285,9 +328,9 @@ class Database:
         self._update()
         self.save()
         # we need the save above to avoid loading the old database that still contains the deleted elements
-        if table_name[:4]!='meta':
-            self._add_to_insert_stack(table_name, deleted)
-        self.save()
+        #if table_name[:4]!='meta':
+        #    self._add_to_insert_stack(table_name, deleted)
+        #self.save()
 
     def select(self, table_name, columns, condition=None, order_by=None, asc=False,\
                top_k=None, save_as=None, return_object=False):
@@ -320,6 +363,63 @@ class Database:
             table = self.tables[table_name]._select_where_with_btree(columns, bt, condition, order_by, asc, top_k)
         else:
             table = self.tables[table_name]._select_where(columns, condition, order_by, asc, top_k)
+        self.unlock_table(table_name)
+        if save_as is not None:
+            table._name = save_as
+            self.table_from_object(table)
+        else:
+            if return_object:
+                return table
+            else:
+                table.show()
+
+    def select_bin(self, table_name, columns, condition=None, order_by=None, asc=False,\
+               top_k=None, save_as=None, return_object=False):
+        '''
+        Selects and outputs a table's data where condtion is met.
+
+        table_name -> table's name (needs to exist in database)
+        columns -> The columns that will be part of the output table (use '*' to select all the available columns)
+        condition -> a condition using the following format :
+                    'column[==]value' or
+                    'value[==]column'.
+
+                    operatores supported -> == , <= , >=
+        order_by -> A column name that signals that the resulting table should be ordered based on it. Def: None (no ordering)
+        asc -> If True order by will return results using an ascending order. Def: False
+        top_k -> A number (int) that defines the number of rows that will be returned. Def: None (all rows)
+        save_as -> The name that will be used to save the resulting table in the database. Def: None (no save)
+        return_object -> If true, the result will be a table object (usefull for internal usage). Def: False (the result will be printed)
+
+        '''
+        self.load(self.savedir)
+        if self.is_locked(table_name):
+            return
+        self.lockX_table(table_name)
+        if condition is not None:
+            condition_column = split_condition(condition)[0]
+        table = self.tables[table_name]._select_where_bin(columns, condition, order_by, asc, top_k)
+        self.unlock_table(table_name)
+        if save_as is not None:
+            table._name = save_as
+            self.table_from_object(table)
+        else:
+            if return_object:
+                return table
+            else:
+                table.show()
+
+    def select_bin_stack(self, table_name, columns, condition=None, order_by=None, asc=False,\
+              save_as=None, return_object=False):
+        insert_table = table_name + "_insert_queue"
+        self.load(self.savedir)
+        if self.is_locked(table_name):
+            return
+        self.lockX_table(table_name)
+        if condition is not None:
+            condition_column = split_condition(condition)[0]
+        list_stack = self.tables[insert_table]
+        table = self.tables[table_name]._select_stack_bin(table_name,list_stack,columns, condition, order_by, asc)
         self.unlock_table(table_name)
         if save_as is not None:
             table._name = save_as

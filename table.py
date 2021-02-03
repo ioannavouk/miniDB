@@ -3,6 +3,8 @@ from tabulate import tabulate
 import pickle
 import os
 from misc import get_op, split_condition
+from binary_search import bin_search
+
 
 class Table:
     '''
@@ -170,7 +172,6 @@ class Table:
         # we have to return the deleted indexes, since they will be appended to the insert_stack
         return indexes_to_del
 
-
     def _select_where(self, return_columns, condition=None, order_by=None, asc=False, top_k=None):
         '''
         Select and return a table containing specified columns and rows where condition is met
@@ -198,6 +199,102 @@ class Table:
         # copy the old dict, but only the rows and columns of data with index in rows/columns (the indexes that we want returned)
         dict = {(key):([[self.data[i][j] for j in return_cols] for i in rows] if key=="data" else value) for key,value in self.__dict__.items()}
 
+        # we need to set the new column names/types and no of columns, since we might
+        # only return some columns
+        dict['column_names'] = [self.column_names[i] for i in return_cols]
+        dict['column_types']   = [self.column_types[i] for i in return_cols]
+        dict['_no_of_columns'] = len(return_cols)
+
+        # order by the return table if specified
+        if order_by is None:
+            return Table(load=dict)
+        else:
+            return Table(load=dict).order_by(order_by, asc)
+
+
+    def _select_where_bin(self, return_columns, condition=None, order_by=None, asc=False, top_k=None):
+        '''
+        Select and return a table containing specified columns and rows where condition is met
+        '''
+
+        # if * return all columns, else find the column indexes for the columns specified
+        if return_columns == '*':
+            return_cols = [i for i in range(len(self.column_names))]
+        elif isinstance(return_columns, str):
+            raise Exception(f'Return columns should be "*" or of type list. (the second parameter is return_columns not condition)')
+        else:
+            return_cols = [self.column_names.index(colname) for colname in return_columns]
+
+        # if condition is None, return all rows
+        # if not, return the rows with values where condition is met for value
+        if condition is not None:
+            column_name, operator, value = self._parse_condition(condition)
+            column = self.columns[self.column_names.index(column_name)]
+            list_test = bin_search(value, column, operator)
+            if list_test == 0:
+                rows = []
+            else:
+                rows = [i for i in list_test]
+        else:
+            rows = [i for i in range(len(self.columns[0]))]
+
+        # top k rows
+        rows = rows[:top_k]
+        # copy the old dict, but only the rows and columns of data with index in rows/columns (the indexes that we want returned)
+        dict = {(key):([[self.data[i][j] for j in return_cols] for i in rows] if key=="data" else value) for key,value in self.__dict__.items()}
+
+        # we need to set the new column names/types and no of columns, since we might
+        # only return some columns
+        dict['column_names'] = [self.column_names[i] for i in return_cols]
+        dict['column_types']   = [self.column_types[i] for i in return_cols]
+        dict['_no_of_columns'] = len(return_cols)
+
+        # order by the return table if specified
+        if order_by is None:
+            return Table(load=dict)
+        else:
+            return Table(load=dict).order_by(order_by, asc)
+
+
+    def _select_stack_bin(self, table_name, list_stack, return_columns, condition=None, order_by=None, asc=False,):
+
+        # if * return all columns, else find the column indexes for the columns specified
+        if return_columns == '*':
+            return_cols = [i for i in range(len(self.column_names))]
+        elif isinstance(return_columns, str):
+            raise Exception(f'Return columns should be "*" or of type list. (the second parameter is return_columns not condition)')
+        else:
+            return_cols = [self.column_names.index(colname) for colname in return_columns]
+
+        # if condition is None, return all rows
+        # if not, return the rows with values where condition is met for value
+        if condition is not None:
+            column_name, operator, value = self._parse_condition(condition)
+            column = self.columns[self.column_names.index(column_name)]
+            list_test = bin_search(value, column, operator)
+            if list_test == 0:
+                rows1 = []
+            else:
+                rows1 = [i for i in list_test]
+
+            column2 = list_stack.columns[self.column_names.index(column_name)]
+            list_test2 = bin_search(value, column2, operator)
+            if list_test2 == 0:
+                rows2 = []
+            else:
+                rows2 = [i for i in list_test2]
+        else:
+              rows2 = [i for i in range(len(list_stack.columns[0]))]
+              rows1 = [i for i in range(len(self.columns[0]))]
+
+        # copy the old dict, but only the rows and columns of data with index in rows/columns (the indexes that we want returned)
+        dict = {(key):([[self.data[i][j] for j in return_cols] for i in rows1] if key=="data" else value) for key,value in self.__dict__.items()}
+        dict_row = []
+        for i in rows2:
+            for j in return_cols:
+                dict_row.append(list_stack.columns[j][i])
+            dict['data'] = dict.get('data', []) + [dict_row]
+            dict_row = []
         # we need to set the new column names/types and no of columns, since we might
         # only return some columns
         dict['column_names'] = [self.column_names[i] for i in return_cols]
